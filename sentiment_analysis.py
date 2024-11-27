@@ -76,7 +76,9 @@ while True:
 
                 # Update the item with analysis results
                 table.update_item(
-                    Key={'post_id': item['post_id']},
+                    Key={
+                        'post_id': item['post_id']  # This should match exactly with your DynamoDB primary key name
+                    },
                     UpdateExpression="""
                         SET sentiment = :s, 
                             named_entities = :n, 
