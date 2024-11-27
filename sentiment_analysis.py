@@ -20,6 +20,10 @@ ner = pipeline('ner', model='dslim/bert-base-NER')
 def process_text(text):
     """Process text and return sentiment and NER results"""
     try:
+        # Debug logging
+        if len(text) > 300:  # Since Bluesky has a 300-char limit
+            logger.warning(f"Unexpectedly long text ({len(text)} chars): {text[:100]}...")
+
         sentiment_result = sentiment_analysis(text)
         ner_result = ner(text)
         
@@ -39,6 +43,7 @@ def process_text(text):
         }
     except Exception as e:
         logger.error(f"Error processing text: {str(e)}")
+        logger.error(f"Problematic text ({len(text)} chars): {text[:100]}...")
         return None
 
 while True:
