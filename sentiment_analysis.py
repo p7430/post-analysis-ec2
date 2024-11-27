@@ -3,6 +3,7 @@ from transformers import pipeline
 from boto3.dynamodb.conditions import Attr
 import logging
 from datetime import datetime
+from decimal import Decimal
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -22,15 +23,18 @@ def process_text(text):
         sentiment_result = sentiment_analysis(text)
         ner_result = ner(text)
         
-        # Clean up NER results to make them DynamoDB-friendly
+        # Convert sentiment score to Decimal
+        sentiment_result[0]['score'] = Decimal(str(sentiment_result[0]['score']))
+        
+        # Clean up NER results and convert scores to Decimal
         cleaned_ner = [{
             'word': item['word'],
             'entity': item['entity'],
-            'score': float(item['score'])  # Convert numpy float to Python float
+            'score': Decimal(str(item['score']))  # Convert float to Decimal
         } for item in ner_result]
         
         return {
-            'sentiment': sentiment_result[0],  # Get first result
+            'sentiment': sentiment_result[0],
             'named_entities': cleaned_ner
         }
     except Exception as e:
