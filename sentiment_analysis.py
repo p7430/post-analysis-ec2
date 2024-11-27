@@ -42,7 +42,11 @@ while True:
         # Fetch oldest unanalyzed entries first
         response = table.scan(
             FilterExpression=Attr('analysis_data').not_exists(),
-            ProjectionExpression='post_id, text, timestamp, indexed_at',
+            ProjectionExpression='post_id, #txt, #ts, indexed_at',  # Use expression attribute names
+            ExpressionAttributeNames={
+                '#txt': 'text',  # Define the expression attribute name for 'text'
+                '#ts': 'timestamp'  # Define the expression attribute name for 'timestamp'
+            },
             Limit=10  # Process 10 items at a time
         )
         items = response['Items']
