@@ -77,7 +77,8 @@ while True:
                 # Update the item with analysis results
                 table.update_item(
                     Key={
-                        'post_id': item['post_id']  # This should match exactly with your DynamoDB primary key name
+                        'post_id': item['post_id'],
+                        'timestamp': item['timestamp']  # Include the sort key if applicable
                     },
                     UpdateExpression="""
                         SET sentiment = :s, 
