@@ -20,9 +20,17 @@ ner = pipeline('ner', model='dslim/bert-base-NER')
 def process_text(text):
     """Process text and return sentiment and NER results"""
     try:
-        # Debug logging
-        if len(text) > 300:  # Since Bluesky has a 300-char limit
-            logger.warning(f"Unexpectedly long text ({len(text)} chars): {text[:100]}...")
+        # Skip empty text
+        if not text or not text.strip():
+            return None
+
+        # Check if text is primarily Chinese/Japanese/Korean
+        if any('\u4e00' <= char <= '\u9fff' for char in text):
+            logger.info(f"Skipping CJK text: {text[:50]}...")
+            return {
+                'sentiment': {'label': 'LABEL_1', 'score': Decimal('0.5')},  # Neutral sentiment
+                'named_entities': []
+            }
 
         sentiment_result = sentiment_analysis(text)
         ner_result = ner(text)
@@ -34,7 +42,7 @@ def process_text(text):
         cleaned_ner = [{
             'word': item['word'],
             'entity': item['entity'],
-            'score': Decimal(str(item['score']))  # Convert float to Decimal
+            'score': Decimal(str(item['score']))
         } for item in ner_result]
         
         return {
