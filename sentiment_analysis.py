@@ -43,26 +43,49 @@ def process_text(text):
 
 while True:
     try:
-        # Fetch oldest unanalyzed entries first
-        response = table.scan(
-            FilterExpression=~Attr('analysis_data').exists(),
-            ProjectionExpression='post_id, #txt, #ts, indexed_at',  # Use expression attribute names
-            ExpressionAttributeNames={
-                '#txt': 'text',  # Define the expression attribute name for 'text'
-                '#ts': 'timestamp'  # Define the expression attribute name for 'timestamp'
-            },
-            Limit=10  # Process 10 items at a time
-        )
-        items = response['Items']
-        logger.info(f"Scan returned {len(items)} items")
-        logger.info(f"Last evaluated key: {response.get('LastEvaluatedKey')}")
+        items = []
+        last_evaluated_key = None
+        
+        # Scan with pagination
+        while True:
+            if last_evaluated_key:
+                response = table.scan(
+                    FilterExpression=~Attr('analysis_data').exists(),
+                    ProjectionExpression='post_id, #txt, #ts, indexed_at',
+                    ExpressionAttributeNames={
+                        '#txt': 'text',
+                        '#ts': 'timestamp'
+                    },
+                    ExclusiveStartKey=last_evaluated_key,
+                    Limit=10
+                )
+            else:
+                response = table.scan(
+                    FilterExpression=~Attr('analysis_data').exists(),
+                    ProjectionExpression='post_id, #txt, #ts, indexed_at',
+                    ExpressionAttributeNames={
+                        '#txt': 'text',
+                        '#ts': 'timestamp'
+                    },
+                    Limit=10
+                )
+            
+            current_items = response.get('Items', [])
+            items.extend(current_items)
+            
+            last_evaluated_key = response.get('LastEvaluatedKey')
+            logger.info(f"Scan returned {len(current_items)} items")
+            logger.info(f"Last evaluated key: {last_evaluated_key}")
+            
+            if not last_evaluated_key or len(items) >= 10:  # Stop if we have enough items or no more pages
+                break
         
         # Sort items by timestamp
         sorted_items = sorted(items, key=lambda x: x.get('timestamp', ''))
 
         if not sorted_items:
             logger.info("No unanalyzed items found. Checking again immediately...")
-            continue  # Skip to next iteration immediately to check for new items
+            continue
 
         for item in sorted_items:
             text = item.get('text', '')
@@ -80,7 +103,7 @@ while True:
                 table.update_item(
                     Key={
                         'post_id': item['post_id'],
-                        'timestamp': item['timestamp']  # Include the sort key if applicable
+                        'timestamp': item['timestamp']
                     },
                     UpdateExpression="""
                         SET sentiment = :s, 
@@ -96,7 +119,6 @@ while True:
                     }
                 )
                 
-                # Log the updated data point and its new values
                 logger.info(f"Updated post {item['post_id']} with sentiment: {analysis_results['sentiment']} and named_entities: {analysis_results['named_entities']}")
                 
             except Exception as e:
@@ -105,4 +127,4 @@ while True:
         
     except Exception as e:
         logger.error(f"Error in main loop: {str(e)}")
-        continue  # Continue to next iteration immediately
+        continue
