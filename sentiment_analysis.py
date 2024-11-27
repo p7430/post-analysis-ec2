@@ -45,7 +45,7 @@ while True:
     try:
         # Fetch oldest unanalyzed entries first
         response = table.scan(
-            FilterExpression=Attr('analysis_data').attribute_not_exists(),
+            FilterExpression=~Attr('analysis_data').exists(),
             ProjectionExpression='post_id, #txt, #ts, indexed_at',  # Use expression attribute names
             ExpressionAttributeNames={
                 '#txt': 'text',  # Define the expression attribute name for 'text'
