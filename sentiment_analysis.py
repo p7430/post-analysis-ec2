@@ -45,7 +45,7 @@ while True:
     try:
         # Fetch oldest unanalyzed entries first
         response = table.scan(
-            FilterExpression=Attr('analysis_data').not_exists(),
+            FilterExpression=Attr('analysis_data').attribute_not_exists(),
             ProjectionExpression='post_id, #txt, #ts, indexed_at',  # Use expression attribute names
             ExpressionAttributeNames={
                 '#txt': 'text',  # Define the expression attribute name for 'text'
@@ -54,6 +54,8 @@ while True:
             Limit=10  # Process 10 items at a time
         )
         items = response['Items']
+        logger.info(f"Scan returned {len(items)} items")
+        logger.info(f"Last evaluated key: {response.get('LastEvaluatedKey')}")
         
         # Sort items by timestamp
         sorted_items = sorted(items, key=lambda x: x.get('timestamp', ''))
