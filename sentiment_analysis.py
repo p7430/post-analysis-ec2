@@ -113,12 +113,50 @@ def process_batch(posts, batch_size=100):
             logger.error(f"Error processing post {post.get('_id')}: {str(e)}")
             continue
 
-def main():
-    batch_size = 100
-    scroll_size = 1000
+def test_results(num_entries=10):
+    """Test function to verify sentiment analysis results"""
+    try:
+        # Query for posts that have been analyzed
+        query = {
+            "query": {
+                "exists": {
+                    "field": "sentiment_analysis"
+                }
+            },
+            "size": num_entries,
+            "sort": [{"analyzed_at": "desc"}]
+        }
+
+        response = opensearch_client.search(
+            index=INDEX_NAME,
+            body=query
+        )
+
+        hits = response['hits']['hits']
+        logger.info(f"\nFound {len(hits)} analyzed posts:")
+        
+        for hit in hits:
+            post = hit['_source']
+            logger.info(f"\nPost ID: {hit['_id']}")
+            logger.info(f"Text: {post.get('text', '')[:100]}...")
+            logger.info(f"Sentiment: {post.get('sentiment_analysis', {}).get('sentiment')}")
+            logger.info(f"Analyzed at: {post.get('analyzed_at')}")
+            
+    except Exception as e:
+        logger.error(f"Error testing results: {e}")
+
+def main(test_mode=True, num_test_entries=10):
+    """
+    Main function with test mode option
+    test_mode: If True, only processes a few entries and displays results
+    num_test_entries: Number of entries to process in test mode
+    """
+    logger.info("Starting sentiment analysis...")
     
-    while True:
-        try:
+    try:
+        if test_mode:
+            logger.info("Running in test mode...")
+            
             # Query for unanalyzed posts
             query = {
                 "query": {
@@ -129,43 +167,89 @@ def main():
                     }
                 },
                 "sort": [{"timestamp": "asc"}],
-                "size": scroll_size
+                "size": num_test_entries
             }
 
-            # Initialize scroll
             response = opensearch_client.search(
                 index=INDEX_NAME,
-                body=query,
-                scroll='5m'
+                body=query
             )
 
-            scroll_id = response['_scroll_id']
             hits = response['hits']['hits']
-
-            while hits:
-                logger.info(f"Processing batch of {len(hits)} posts")
+            
+            if not hits:
+                logger.info("No unanalyzed posts found.")
+                return
                 
-                # Process posts in parallel using ThreadPoolExecutor
-                with ThreadPoolExecutor(max_workers=4) as executor:
-                    for i in range(0, len(hits), batch_size):
-                        batch = hits[i:i + batch_size]
-                        executor.submit(process_batch, batch, batch_size)
+            logger.info(f"Processing {len(hits)} posts for testing...")
+            process_batch(hits)
+            
+            # Show the results
+            logger.info("\nChecking results...")
+            test_results(num_test_entries)
+            
+        else:
+            # Original production code
+            batch_size = 100
+            scroll_size = 1000
+            
+            while True:
+                try:
+                    # Query for unanalyzed posts
+                    query = {
+                        "query": {
+                            "bool": {
+                                "must_not": [
+                                    {"exists": {"field": "sentiment_analysis"}}
+                                ]
+                            }
+                        },
+                        "sort": [{"timestamp": "asc"}],
+                        "size": scroll_size
+                    }
 
-                # Get next batch using scroll
-                response = opensearch_client.scroll(
-                    scroll_id=scroll_id,
-                    scroll='5m'
-                )
-                
-                hits = response['hits']['hits']
-                
-            logger.info("No more unanalyzed posts found. Waiting before next check...")
-            time.sleep(60)  # Wait a minute before checking again
+                    # Initialize scroll
+                    response = opensearch_client.search(
+                        index=INDEX_NAME,
+                        body=query,
+                        scroll='5m'
+                    )
 
-        except Exception as e:
-            logger.error(f"Error in main loop: {str(e)}")
-            time.sleep(60)  # Wait before retrying
-            continue
+                    scroll_id = response['_scroll_id']
+                    hits = response['hits']['hits']
+
+                    while hits:
+                        logger.info(f"Processing batch of {len(hits)} posts")
+                        
+                        # Process posts in parallel using ThreadPoolExecutor
+                        with ThreadPoolExecutor(max_workers=4) as executor:
+                            for i in range(0, len(hits), batch_size):
+                                batch = hits[i:i + batch_size]
+                                executor.submit(process_batch, batch, batch_size)
+
+                        # Get next batch using scroll
+                        response = opensearch_client.scroll(
+                            scroll_id=scroll_id,
+                            scroll='5m'
+                        )
+                        
+                        hits = response['hits']['hits']
+                        
+                    logger.info("No more unanalyzed posts found. Waiting before next check...")
+                    time.sleep(60)  # Wait a minute before checking again
+
+                except Exception as e:
+                    logger.error(f"Error in main loop: {str(e)}")
+                    time.sleep(60)  # Wait before retrying
+                    continue
+                    
+    except Exception as e:
+        logger.error(f"Error in main function: {str(e)}")
+        raise
 
 if __name__ == "__main__":
-    main()
+    # Run in test mode with 10 entries
+    main(test_mode=True, num_test_entries=10)
+    
+    # For production, use:
+    # main(test_mode=False)
