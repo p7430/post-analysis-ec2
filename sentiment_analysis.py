@@ -57,20 +57,16 @@ sentiment_pipeline = pipeline("sentiment-analysis", model=model, tokenizer=token
 
 def detect_language(text):
     try:
-        if not text or not isinstance(text, str):
-            return 'unknown', 0.0
-        
-        logger.info("Starting language detection...")
-        
-        # Use langid to detect language
-        lang, confidence = langid.classify(text)
-        
-        logger.info(f"Language detection successful: {lang}, {confidence}")
-        
-        return lang, confidence
+        lang, conf = langid.classify(text)
+        logger.info(f"Language detection successful: {lang}, {conf}")
+        # Fallback to English if confidence is too low
+        if conf < -50:  # Adjust threshold as needed
+            logger.warning(f"Low confidence in language detection for text: {text}. Defaulting to English.")
+            lang = 'en'
+        return lang, conf
     except Exception as e:
-        logger.warning(f"Language detection failed: {str(e)}", exc_info=True)
-        return 'unknown', 0.0
+        logger.error(f"Error detecting language: {str(e)}", exc_info=True)
+        return 'en', 0  # Default to English on error
 
 def process_text(text, langs=None):
     """Process text and return sentiment results"""
