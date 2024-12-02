@@ -65,36 +65,38 @@ def process_text(text, langs=None):
         # Verify language regardless of provided langs
         try:
             detected_lang = detect(text)
-            # If langs is empty or seems incorrect (e.g., marked as 'en' but detected as different)
-            if not langs or (detected_lang != 'en' and 'en' in langs):
-                logger.warning(f"Language mismatch - Provided langs: {langs}, Detected: {detected_lang}")
+            if not langs:
                 langs = [detected_lang]
+            elif detected_lang != 'en' and 'en' in langs:
+                logger.warning(f"Language mismatch - Provided langs: {langs}, Detected: {detected_lang}")
+                langs = [detected_lang]  # Trust the detection over the provided lang
         except Exception as e:
             logger.warning(f"Language detection failed: {str(e)}")
-            if not langs:  # Only use empty list if we don't have original langs
+            if not langs:
                 langs = []
 
-        # Skip if not English
-        if 'en' not in langs:
+        # Skip if not English - MOVED BEFORE sentiment analysis
+        if 'en' not in langs or detected_lang != 'en':
             logger.info(f"Skipping non-English text (langs: {langs})")
             return {
                 'sentiment': {'label': 'NEU', 'score': 0.5}
             }
 
+        # Only analyze English text
         sentiment_result = sentiment_pipeline(text)[0]
         
         # Map the labels properly
-        label_mapping = {
-            'POS': 'POS',
-            'NEG': 'NEG',
-            'NEU': 'NEU',
-            'LABEL_0': 'NEG',
-            'LABEL_1': 'POS'
-        }
+        label = sentiment_result['label']
+        if label == 'LABEL_0':
+            mapped_label = 'NEG'
+        elif label == 'LABEL_1':
+            mapped_label = 'POS'
+        else:
+            mapped_label = 'NEU'
         
         return {
             'sentiment': {
-                'label': label_mapping.get(sentiment_result['label'], 'NEU'),
+                'label': mapped_label,
                 'score': float(sentiment_result['score'])
             }
         }
