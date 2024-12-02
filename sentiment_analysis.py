@@ -72,19 +72,24 @@ def process_text(text, langs=None):
 
         # Skip if not English
         if 'en' not in langs or detected_lang != 'en':
-            logger.info(f"Skipping non-English text (langs: {langs})")
-            return None
+            logger.info(f"Marking non-English text (detected: {detected_lang}, provided: {langs})")
+            return {
+                'sentiment': {
+                    'label': f'NON_ENGLISH_{detected_lang.upper()}',
+                    'score': 0.0
+                }
+            }
 
         # Only analyze English text
         sentiment_result = sentiment_pipeline(text)[0]
         
-        # Map the labels properly
+        # Map the labels properly - FIXED mapping
         label = sentiment_result['label']
         if label == 'LABEL_0':
             mapped_label = 'NEG'
-        elif label == 'LABEL_1':
+        elif label == 'LABEL_2':  # Changed from LABEL_1
             mapped_label = 'POS'
-        else:
+        else:  # LABEL_1
             mapped_label = 'NEU'
         
         return {
@@ -96,7 +101,12 @@ def process_text(text, langs=None):
     except Exception as e:
         logger.error(f"Error processing text: {str(e)}")
         logger.error(f"Problematic text ({len(text)} chars): {text[:100]}...")
-        return None
+        return {
+            'sentiment': {
+                'label': 'ANALYSIS_ERROR',
+                'score': 0.0
+            }
+        }
 
 def process_batch(posts, batch_size=100):
     """Process a batch of posts"""
