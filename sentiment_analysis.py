@@ -55,15 +55,25 @@ tokenizer = AutoTokenizer.from_pretrained(model_name)
 model = AutoModelForSequenceClassification.from_pretrained(model_name)
 sentiment_pipeline = pipeline("sentiment-analysis", model=model, tokenizer=tokenizer)
 
-# Load the fasttext model
+# Initialize fasttext model
 fasttext_model = fasttext.load_model('lid.176.bin')
 
 def detect_language(text):
-    """Detect language using fasttext"""
-    predictions = fasttext_model.predict(text, k=1)  # Get top prediction
-    lang_code = predictions[0][0].replace('__label__', '')
-    confidence = predictions[1][0]
-    return lang_code, confidence
+    try:
+        # FastText expects clean text
+        if not text or not isinstance(text, str):
+            return 'unknown'
+            
+        # Get prediction from fasttext
+        prediction = fasttext_model.predict(text.replace('\n', ' '))
+        
+        # Extract language code (removing '__label__' prefix)
+        lang = prediction[0][0].replace('__label__', '')
+        
+        return lang
+    except Exception as e:
+        logger.warning(f"Language detection failed: {str(e)}")
+        return 'unknown'
 
 def process_text(text, langs=None):
     """Process text and return sentiment results"""
