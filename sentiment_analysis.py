@@ -104,12 +104,22 @@ def process_batch(posts, batch_size=100):
         try:
             source = post.get('_source', {})
             text = source.get('text', '')
-            langs = source.get('langs', [])  # Get the langs field
+            langs = source.get('langs', [])
             
             if not text:
                 continue
 
-            analysis_results = process_text(text, langs)  # Pass langs to process_text
+            # Skip non-English posts early
+            try:
+                detected_lang = detect(text)
+                if detected_lang != 'en' or ('en' not in langs and langs):
+                    logger.info(f"Skipping non-English text (detected: {detected_lang}, provided: {langs})")
+                    continue
+            except Exception as e:
+                logger.warning(f"Language detection failed: {str(e)}")
+                continue
+
+            analysis_results = process_text(text, langs)
             if not analysis_results:
                 continue
 
