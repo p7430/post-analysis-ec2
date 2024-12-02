@@ -60,18 +60,16 @@ def detect_language(text):
         if not text or not isinstance(text, str):
             return 'unknown', 0.0
         
-        # Add debug logging
-        logger.debug(f"Attempting to detect language for text: {text[:100]}...")
+        logger.info("Starting language detection...")
         
         # Use langid to detect language
         lang, confidence = langid.classify(text)
         
-        # Log the result
-        logger.debug(f"Language detection result: {lang}, confidence: {confidence}")
+        logger.info(f"Language detection successful: {lang}, {confidence}")
         
         return lang, confidence
     except Exception as e:
-        logger.warning(f"Language detection failed: {str(e)}")
+        logger.warning(f"Language detection failed: {str(e)}", exc_info=True)
         return 'unknown', 0.0
 
 def process_text(text, langs=None):
@@ -400,5 +398,13 @@ def main(test_mode=True, num_test_entries=10):
         raise
 
 if __name__ == "__main__":
+    # Add a quick test before running main
+    try:
+        test_text = "Hello, this is a test message"
+        lang, conf = detect_language(test_text)
+        logger.info(f"Test detection result: {lang}, {conf}")
+    except Exception as e:
+        logger.error(f"Test detection failed: {str(e)}", exc_info=True)
+    
     # Production mode
     main(test_mode=False)
