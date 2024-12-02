@@ -151,7 +151,7 @@ def process_batch(posts, batch_size=100):
 
             # Handle non-English posts
             try:
-                detected_lang = detect(text)
+                detected_lang, confidence = detect_language(text)
                 if detected_lang != 'en' or ('en' not in langs and langs):
                     logger.info(f"Marking non-English text (detected: {detected_lang}, provided: {langs})")
                     update_body = {
