@@ -9,6 +9,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import fasttext
 import urllib.request
 import os
+import numpy as np
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -81,17 +82,21 @@ def detect_language(text):
         if not text or text.isspace():
             return 'unknown', 0.0
 
-        predictions = ft_model.predict(text.replace('\n', ' '))
-        lang = predictions[0][0].replace('__label__', '')
-        conf = float(predictions[1][0])
+        # Clean the text
+        cleaned_text = text.replace('\n', ' ').strip()
+        if not cleaned_text:
+            return 'unknown', 0.0
+
+        # Get prediction from FastText and handle the array creation
+        labels, probs = ft_model.predict(cleaned_text)
+        # Use np.asarray instead of np.array with copy=False
+        probs = np.asarray(probs)
+        
+        # Get the first prediction
+        lang = labels[0].replace('__label__', '')
+        conf = float(probs[0])
 
         logger.info(f"Language detection successful: {lang}, {conf}")
-
-        # Flag low confidence without defaulting to English
-        if conf < 0.5:
-            logger.warning(f"Low confidence in language detection for text: {text}. Detected language: {lang}")
-            lang = 'low_confidence'
-
         return lang, conf
 
     except Exception as e:
