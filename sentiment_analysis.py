@@ -6,11 +6,22 @@ import logging
 from datetime import datetime
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-import langid
+import fasttext
+import urllib.request
+import os
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
+
+def download_fasttext_model():
+    """Download the FastText language identification model if not present"""
+    model_path = "lid.176.ftz"
+    if not os.path.exists(model_path):
+        logger.info("Downloading FastText language identification model...")
+        url = "https://dl.fbaipublicfiles.com/fasttext/supervised-models/lid.176.ftz"
+        urllib.request.urlretrieve(url, model_path)
+    return model_path
 
 def get_opensearch_credentials():
     try:
@@ -55,18 +66,37 @@ tokenizer = AutoTokenizer.from_pretrained(model_name)
 model = AutoModelForSequenceClassification.from_pretrained(model_name)
 sentiment_pipeline = pipeline("sentiment-analysis", model=model, tokenizer=tokenizer)
 
+# Initialize FastText model
+try:
+    fasttext.FastText.eprint = lambda x: None  # Suppress FastText warning messages
+    model_path = download_fasttext_model()
+    ft_model = fasttext.load_model(model_path)
+    logger.info("FastText language detection model loaded successfully")
+except Exception as e:
+    logger.error(f"Failed to load FastText model: {str(e)}")
+    raise
+
 def detect_language(text):
     try:
-        lang, conf = langid.classify(text)
+        if not text or text.isspace():
+            return 'unknown', 0.0
+
+        predictions = ft_model.predict(text.replace('\n', ' '))
+        lang = predictions[0][0].replace('__label__', '')
+        conf = float(predictions[1][0])
+
         logger.info(f"Language detection successful: {lang}, {conf}")
-        # Fallback to English if confidence is too low
-        if conf < -50:  # Adjust threshold as needed
-            logger.warning(f"Low confidence in language detection for text: {text}. Defaulting to English.")
-            lang = 'en'
+
+        # Flag low confidence without defaulting to English
+        if conf < 0.5:
+            logger.warning(f"Low confidence in language detection for text: {text}. Detected language: {lang}")
+            lang = 'low_confidence'
+
         return lang, conf
+
     except Exception as e:
         logger.error(f"Error detecting language: {str(e)}", exc_info=True)
-        return 'en', 0  # Default to English on error
+        return 'unknown', 0.0
 
 def process_text(text, langs=None):
     """Process text and return sentiment results"""
@@ -177,16 +207,28 @@ def process_batch(posts, batch_size=100):
                     analysis_results = process_text(text)
                 else:  # Has langs but not English
                     detected_lang, confidence = detect_language(text)
-                    logger.info(f"Marking non-English text (detected: {detected_lang}, provided: {langs})")
-                    update_body = {
-                        'doc': {
-                            'sentiment_analysis': {
-                                'sentiment': {'label': f'NON_ENGLISH_{detected_lang.upper()}', 'score': 0.0}
-                            },
-                            'analyzed_at': datetime.utcnow().isoformat(),
-                            'detected_language': detected_lang
+                    if detected_lang == 'low_confidence':
+                        logger.info(f"Low confidence in language detection for text: {text}. Skipping sentiment analysis.")
+                        update_body = {
+                            'doc': {
+                                'sentiment_analysis': {
+                                    'sentiment': {'label': 'LOW_CONFIDENCE', 'score': 0.0}
+                                },
+                                'analyzed_at': datetime.utcnow().isoformat(),
+                                'detected_language': detected_lang
+                            }
                         }
-                    }
+                    else:
+                        logger.info(f"Marking non-English text (detected: {detected_lang}, provided: {langs})")
+                        update_body = {
+                            'doc': {
+                                'sentiment_analysis': {
+                                    'sentiment': {'label': f'NON_ENGLISH_{detected_lang.upper()}', 'score': 0.0}
+                                },
+                                'analyzed_at': datetime.utcnow().isoformat(),
+                                'detected_language': detected_lang
+                            }
+                        }
                     opensearch_client.update(
                         index=INDEX_NAME,
                         id=post['_id'],
@@ -196,12 +238,24 @@ def process_batch(posts, batch_size=100):
                     continue
             except Exception as e:
                 logger.warning(f"Language detection failed for text: '{text[:100]}...': {str(e)}", exc_info=True)
-                update_body = {
-                    'doc': {
-                        'sentiment_analysis': {'sentiment': {'label': 'LANG_DETECT_ERROR', 'score': 0.0}},
-                        'analyzed_at': datetime.utcnow().isoformat()
+                # Even if language detection fails, try to process as English
+                try:
+                    analysis_results = process_text(text)
+                    update_body = {
+                        'doc': {
+                            'sentiment_analysis': {'sentiment': analysis_results},
+                            'analyzed_at': datetime.utcnow().isoformat()
+                        }
                     }
-                }
+                except Exception as sentiment_error:
+                    logger.error(f"Sentiment analysis failed after language detection error: {str(sentiment_error)}")
+                    update_body = {
+                        'doc': {
+                            'sentiment_analysis': {'sentiment': {'label': 'PROCESSING_ERROR', 'score': 0.0}},
+                            'analyzed_at': datetime.utcnow().isoformat()
+                        }
+                    }
+                
                 opensearch_client.update(
                     index=INDEX_NAME,
                     id=post['_id'],
