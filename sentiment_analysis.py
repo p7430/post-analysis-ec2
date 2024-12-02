@@ -77,27 +77,37 @@ except Exception as e:
     logger.error(f"Failed to load FastText model: {str(e)}")
     raise
 
+# Add this after importing fasttext but before using it
+def patched_predict(self, text, k=1, threshold=0.0, on_unicode_error='strict'):
+    """Monkey-patched version of FastText predict that uses np.asarray"""
+    if isinstance(text, str):
+        text = text.encode('utf-8', errors=on_unicode_error)
+    labels, probs = self._predict(text, k, threshold)
+    # Use asarray instead of array with copy=False
+    return labels, np.asarray(probs)
+
+# Patch the FastText class
+fasttext.FastText.predict = patched_predict
+
 def detect_language(text):
     try:
         if not text or text.isspace():
             return 'unknown', 0.0
 
-        # Clean the text
         cleaned_text = text.replace('\n', ' ').strip()
         if not cleaned_text:
             return 'unknown', 0.0
 
-        # Get prediction from FastText and handle the array creation
-        labels, probs = ft_model.predict(cleaned_text)
-        # Use np.asarray instead of np.array with copy=False
-        probs = np.asarray(probs)
-        
-        # Get the first prediction
-        lang = labels[0].replace('__label__', '')
-        conf = float(probs[0])
-
-        logger.info(f"Language detection successful: {lang}, {conf}")
-        return lang, conf
+        # Get prediction from FastText
+        try:
+            labels, probs = ft_model.predict(cleaned_text)
+            lang = labels[0].replace('__label__', '')
+            conf = float(probs[0])
+            logger.info(f"Language detection successful: {lang}, {conf}")
+            return lang, conf
+        except Exception as predict_error:
+            logger.error(f"FastText prediction failed: {str(predict_error)}")
+            return 'unknown', 0.0
 
     except Exception as e:
         logger.error(f"Error detecting language: {str(e)}", exc_info=True)
