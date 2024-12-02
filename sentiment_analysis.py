@@ -6,7 +6,7 @@ import logging
 from datetime import datetime
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-import fasttext
+import langid
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -55,18 +55,19 @@ tokenizer = AutoTokenizer.from_pretrained(model_name)
 model = AutoModelForSequenceClassification.from_pretrained(model_name)
 sentiment_pipeline = pipeline("sentiment-analysis", model=model, tokenizer=tokenizer)
 
-# Initialize fasttext model
-fasttext_model = fasttext.load_model('lid.176.bin')
-
 def detect_language(text):
     try:
         if not text or not isinstance(text, str):
             return 'unknown', 0.0
-            
-        # Get prediction and confidence from fasttext
-        predictions = fasttext_model.predict(text.replace('\n', ' '), k=1)
-        lang = predictions[0][0].replace('__label__', '')
-        confidence = float(predictions[1][0])
+        
+        # Add debug logging
+        logger.debug(f"Attempting to detect language for text: {text[:100]}...")
+        
+        # Use langid to detect language
+        lang, confidence = langid.classify(text)
+        
+        # Log the result
+        logger.debug(f"Language detection result: {lang}, confidence: {confidence}")
         
         return lang, confidence
     except Exception as e:
@@ -82,19 +83,8 @@ def process_text(text, langs=None):
         # Detect language with confidence
         detected_lang, confidence = detect_language(text)
         
-        if confidence < 0.7:  # Confidence threshold
-            detected_lang = 'en'  # Default to English if confidence is low
-            logger.info(f"Low confidence language detection ({confidence:.2f}), defaulting to English")
-
-        if not langs:
-            langs = [detected_lang]
-        elif detected_lang != 'en' and 'en' in langs:
-            logger.warning(f"Language mismatch - Provided langs: {langs}, Detected: {detected_lang} (conf: {confidence:.2f})")
-            langs = [detected_lang]  # Trust the detection over the provided lang
-
-        # Skip if not English
-        if 'en' not in langs or detected_lang != 'en':
-            logger.info(f"Marking non-English text (detected: {detected_lang}, conf: {confidence:.2f}, provided: {langs})")
+        if detected_lang != 'en':
+            logger.info(f"Marking non-English text (detected: {detected_lang}, conf: {confidence:.2f})")
             return {
                 'sentiment': {
                     'label': f'NON_ENGLISH_{detected_lang.upper()}',
@@ -112,7 +102,7 @@ def process_text(text, langs=None):
         # Add debug logging
         logger.info(f"Raw sentiment result: {sentiment_result}")
         
-        # Map the labels properly - CORRECTED mapping
+        # Map the labels properly
         label = sentiment_result['label']
         if label == 'NEG':
             mapped_label = 'NEG'
