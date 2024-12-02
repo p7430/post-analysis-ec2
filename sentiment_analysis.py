@@ -86,13 +86,13 @@ def process_text(text, langs=None):
         # Add debug logging
         logger.info(f"Raw sentiment result: {sentiment_result}")
         
-        # Map the labels properly - FIXED mapping
+        # Map the labels properly - CORRECTED mapping
         label = sentiment_result['label']
-        if label == 'LABEL_0':
+        if label == 'NEG':
             mapped_label = 'NEG'
-        elif label == 'LABEL_2':  # Changed from LABEL_1
+        elif label == 'POS':
             mapped_label = 'POS'
-        else:  # LABEL_1
+        else:  # 'NEU'
             mapped_label = 'NEU'
         
         return {
