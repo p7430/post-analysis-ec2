@@ -83,6 +83,9 @@ def process_text(text, langs=None):
         # Only analyze English text
         sentiment_result = sentiment_pipeline(text)[0]
         
+        # Add debug logging
+        logger.info(f"Raw sentiment result: {sentiment_result}")
+        
         # Map the labels properly - FIXED mapping
         label = sentiment_result['label']
         if label == 'LABEL_0':
