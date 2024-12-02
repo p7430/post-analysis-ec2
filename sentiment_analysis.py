@@ -336,6 +336,36 @@ def test_model_outputs():
         logger.info(f"Raw output: {result}")
         logger.info("---")
 
+def detect_language(text):
+    """Detect language of text using FastText model"""
+    try:
+        if not text or text.isspace():
+            return 'unknown', 0.0
+
+        cleaned_text = text.replace('\n', ' ').strip()
+        if not cleaned_text:
+            return 'unknown', 0.0
+
+        # Get prediction from FastText wrapper
+        labels, probs = ft_model.predict(cleaned_text)
+        
+        # Extract language code and confidence
+        if not labels or not probs:
+            return 'unknown', 0.0
+            
+        lang = labels[0].replace('__label__', '')
+        conf = probs[0]
+        
+        # Return unknown if confidence is too low
+        if conf < 0.5:
+            return 'low_confidence', conf
+            
+        return lang, conf
+
+    except Exception as e:
+        logger.error(f"Error detecting language: {str(e)}")
+        return 'unknown', 0.0
+
 def main(test_mode=True, num_test_entries=10):
     """
     Main function with test mode option
