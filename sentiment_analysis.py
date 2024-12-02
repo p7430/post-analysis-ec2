@@ -6,8 +6,7 @@ import logging
 from datetime import datetime
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from langdetect import detect, DetectorFactory
-DetectorFactory.seed = 0  # Ensure consistent results
+import fasttext
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -56,6 +55,16 @@ tokenizer = AutoTokenizer.from_pretrained(model_name)
 model = AutoModelForSequenceClassification.from_pretrained(model_name)
 sentiment_pipeline = pipeline("sentiment-analysis", model=model, tokenizer=tokenizer)
 
+# Load the fasttext model
+fasttext_model = fasttext.load_model('lid.176.bin')
+
+def detect_language(text):
+    """Detect language using fasttext"""
+    predictions = fasttext_model.predict(text, k=1)  # Get top prediction
+    lang_code = predictions[0][0].replace('__label__', '')
+    confidence = predictions[1][0]
+    return lang_code, confidence
+
 def process_text(text, langs=None):
     """Process text and return sentiment results"""
     try:
@@ -63,7 +72,10 @@ def process_text(text, langs=None):
             return None
 
         # Detect language
-        detected_lang = detect(text)
+        detected_lang, confidence = detect_language(text)
+        if confidence < 0.7:  # Set a confidence threshold
+            detected_lang = 'en'  # Default to English if confidence is low
+
         if not langs:
             langs = [detected_lang]
         elif detected_lang != 'en' and 'en' in langs:
