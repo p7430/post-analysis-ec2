@@ -242,6 +242,20 @@ def test_results(num_entries=10):
     except Exception as e:
         logger.error(f"Error testing results: {e}")
 
+def test_model_outputs():
+    test_texts = [
+        "I love this! It's amazing!",
+        "I hate this, it's terrible",
+        "This is okay, nothing special"
+    ]
+    
+    logger.info("Testing model outputs directly:")
+    for text in test_texts:
+        result = sentiment_pipeline(text)[0]
+        logger.info(f"Text: {text}")
+        logger.info(f"Raw output: {result}")
+        logger.info("---")
+
 def main(test_mode=True, num_test_entries=10):
     """
     Main function with test mode option
@@ -282,6 +296,8 @@ def main(test_mode=True, num_test_entries=10):
             # Show the results
             logger.info("\nChecking results...")
             test_results(num_test_entries)
+            
+            test_model_outputs()
             
         else:
             # Production settings
