@@ -232,8 +232,6 @@ def test_results(num_entries=10):
 def main(test_mode=True, num_test_entries=10):
     """
     Main function with test mode option
-    test_mode: If True, only processes a few entries and displays results
-    num_test_entries: Number of entries to process in test mode
     """
     logger.info("Starting sentiment analysis...")
     
@@ -273,9 +271,10 @@ def main(test_mode=True, num_test_entries=10):
             test_results(num_test_entries)
             
         else:
-            # Original production code
-            batch_size = 100
-            scroll_size = 1000
+            # Production settings
+            batch_size = 250  # Increased from 100
+            scroll_size = 2500  # Increased from 1000
+            max_workers = 8  # Increased from 4 to utilize all vCPUs effectively
             
             while True:
                 try:
@@ -292,39 +291,63 @@ def main(test_mode=True, num_test_entries=10):
                         "size": scroll_size
                     }
 
-                    # Initialize scroll
+                    # Initialize scroll with longer timeout
                     response = opensearch_client.search(
                         index=INDEX_NAME,
                         body=query,
-                        scroll='5m'
+                        scroll='15m'  # Increased from 5m
                     )
 
                     scroll_id = response['_scroll_id']
                     hits = response['hits']['hits']
+                    
+                    processed_count = 0
+                    start_time = time.time()
 
                     while hits:
+                        batch_start = time.time()
                         logger.info(f"Processing batch of {len(hits)} posts")
                         
-                        # Process posts in parallel using ThreadPoolExecutor
-                        with ThreadPoolExecutor(max_workers=4) as executor:
+                        # Process posts in parallel
+                        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                            futures = []
                             for i in range(0, len(hits), batch_size):
                                 batch = hits[i:i + batch_size]
-                                executor.submit(process_batch, batch, batch_size)
+                                futures.append(executor.submit(process_batch, batch, batch_size))
+                            
+                            # Wait for all futures to complete
+                            for future in as_completed(futures):
+                                try:
+                                    future.result()
+                                except Exception as e:
+                                    logger.error(f"Batch processing error: {str(e)}")
+
+                        processed_count += len(hits)
+                        batch_time = time.time() - batch_start
+                        rate = len(hits) / batch_time
+                        
+                        logger.info(f"Batch processed at {rate:.2f} posts/second")
+                        logger.info(f"Total processed: {processed_count} posts")
 
                         # Get next batch using scroll
                         response = opensearch_client.scroll(
                             scroll_id=scroll_id,
-                            scroll='5m'
+                            scroll='15m'
                         )
                         
                         hits = response['hits']['hits']
-                        
-                    logger.info("No more unanalyzed posts found. Waiting before next check...")
-                    time.sleep(60)  # Wait a minute before checking again
 
+                    total_time = time.time() - start_time
+                    avg_rate = processed_count / total_time
+                    logger.info(f"Processing complete. Average rate: {avg_rate:.2f} posts/second")
+                    
+                    if processed_count == 0:
+                        logger.info("No more unanalyzed posts found. Waiting before next check...")
+                        time.sleep(30)  # Reduced wait time from 60s to 30s
+                    
                 except Exception as e:
                     logger.error(f"Error in main loop: {str(e)}")
-                    time.sleep(60)  # Wait before retrying
+                    time.sleep(30)  # Reduced wait time
                     continue
                     
     except Exception as e:
@@ -332,8 +355,5 @@ def main(test_mode=True, num_test_entries=10):
         raise
 
 if __name__ == "__main__":
-    # Run in test mode with 10 entries
-    main(test_mode=True, num_test_entries=10)
-    
-    # For production, use:
-    # main(test_mode=False)
+    # Production mode
+    main(test_mode=False)
