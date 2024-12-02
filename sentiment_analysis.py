@@ -6,6 +6,8 @@ import logging
 from datetime import datetime
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from langdetect import detect, DetectorFactory
+DetectorFactory.seed = 0  # Ensure consistent results
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -54,15 +56,27 @@ tokenizer = AutoTokenizer.from_pretrained(model_name)
 model = AutoModelForSequenceClassification.from_pretrained(model_name)
 sentiment_pipeline = pipeline("sentiment-analysis", model=model, tokenizer=tokenizer)
 
-def process_text(text):
+def process_text(text, langs=None):
     """Process text and return sentiment results"""
     try:
         if not text or not text.strip():
             return None
 
-        # Check if text is primarily Chinese/Japanese/Korean
-        if any('\u4e00' <= char <= '\u9fff' for char in text):
-            logger.info(f"Skipping CJK text: {text[:50]}...")
+        # Verify language regardless of provided langs
+        try:
+            detected_lang = detect(text)
+            # If langs is empty or seems incorrect (e.g., marked as 'en' but detected as different)
+            if not langs or (detected_lang != 'en' and 'en' in langs):
+                logger.warning(f"Language mismatch - Provided langs: {langs}, Detected: {detected_lang}")
+                langs = [detected_lang]
+        except Exception as e:
+            logger.warning(f"Language detection failed: {str(e)}")
+            if not langs:  # Only use empty list if we don't have original langs
+                langs = []
+
+        # Skip if not English
+        if 'en' not in langs:
+            logger.info(f"Skipping non-English text (langs: {langs})")
             return {
                 'sentiment': {'label': 'NEU', 'score': 0.5}
             }
@@ -84,11 +98,14 @@ def process_batch(posts, batch_size=100):
     """Process a batch of posts"""
     for post in posts:
         try:
-            text = post.get('_source', {}).get('text', '')
+            source = post.get('_source', {})
+            text = source.get('text', '')
+            langs = source.get('langs', [])  # Get the langs field
+            
             if not text:
                 continue
 
-            analysis_results = process_text(text)
+            analysis_results = process_text(text, langs)  # Pass langs to process_text
             if not analysis_results:
                 continue
 
