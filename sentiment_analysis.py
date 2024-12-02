@@ -1,26 +1,62 @@
+import json
 import boto3
-from transformers import pipeline
-from boto3.dynamodb.conditions import Attr
+from transformers import pipeline, AutoTokenizer, AutoModelForSequenceClassification
+from opensearchpy import OpenSearch, RequestsHttpConnection
 import logging
 from datetime import datetime
-from decimal import Decimal
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# Initialize DynamoDB client
-dynamodb = boto3.resource('dynamodb', region_name='us-east-1')
-table = dynamodb.Table('bsky-posts')
+def get_opensearch_credentials():
+    try:
+        secret_name = "opensearch/master-credentials"
+        region_name = "us-east-1"
+        session = boto3.session.Session()
+        client = session.client(
+            service_name='secretsmanager',
+            region_name=region_name
+        )
+        get_secret_value_response = client.get_secret_value(
+            SecretId=secret_name
+        )
+        secret = json.loads(get_secret_value_response['SecretString'])
+        return secret['username'], secret['password']
+    except Exception as e:
+        logger.error(f"Failed to retrieve OpenSearch credentials: {str(e)}")
+        raise
 
-# Initialize NLP pipelines
-sentiment_analysis = pipeline('sentiment-analysis', model='cardiffnlp/twitter-roberta-base-sentiment')
-ner = pipeline('ner', model='dslim/bert-base-NER')
+# OpenSearch configuration
+REGION = 'us-east-1'
+HOST = 'search-bsky-posts-prod-fo3mg6u3d6zcjmv57tvwpxaaei.us-east-1.es.amazonaws.com'
+INDEX_NAME = 'bsky-posts-prod'
+
+# Get credentials and initialize client
+MASTER_USER, MASTER_PASSWORD = get_opensearch_credentials()
+
+opensearch_client = OpenSearch(
+    hosts=[{'host': HOST, 'port': 443}],
+    http_auth=(MASTER_USER, MASTER_PASSWORD),
+    use_ssl=True,
+    verify_certs=True,
+    connection_class=RequestsHttpConnection,
+    retry_on_timeout=True,
+    max_retries=3,
+    timeout=30
+)
+
+# Initialize sentiment analysis model (BERTweet)
+model_name = "vinai/bertweet-base"
+tokenizer = AutoTokenizer.from_pretrained(model_name)
+model = AutoModelForSequenceClassification.from_pretrained(model_name)
+sentiment_pipeline = pipeline("sentiment-analysis", model=model, tokenizer=tokenizer)
 
 def process_text(text):
-    """Process text and return sentiment and NER results"""
+    """Process text and return sentiment results"""
     try:
-        # Skip empty text
         if not text or not text.strip():
             return None
 
@@ -28,116 +64,108 @@ def process_text(text):
         if any('\u4e00' <= char <= '\u9fff' for char in text):
             logger.info(f"Skipping CJK text: {text[:50]}...")
             return {
-                'sentiment': {'label': 'LABEL_1', 'score': Decimal('0.5')},  # Neutral sentiment
-                'named_entities': []
+                'sentiment': {'label': 'NEU', 'score': 0.5}
             }
 
-        sentiment_result = sentiment_analysis(text)
-        ner_result = ner(text)
-        
-        # Convert sentiment score to Decimal
-        sentiment_result[0]['score'] = Decimal(str(sentiment_result[0]['score']))
-        
-        # Clean up NER results and convert scores to Decimal
-        cleaned_ner = [{
-            'word': item['word'],
-            'entity': item['entity'],
-            'score': Decimal(str(item['score']))
-        } for item in ner_result]
+        sentiment_result = sentiment_pipeline(text)[0]
         
         return {
-            'sentiment': sentiment_result[0],
-            'named_entities': cleaned_ner
+            'sentiment': {
+                'label': sentiment_result['label'],
+                'score': float(sentiment_result['score'])
+            }
         }
     except Exception as e:
         logger.error(f"Error processing text: {str(e)}")
         logger.error(f"Problematic text ({len(text)} chars): {text[:100]}...")
         return None
 
-while True:
-    try:
-        items = []
-        last_evaluated_key = None
-        
-        # Scan with pagination
-        while True:
-            if last_evaluated_key:
-                response = table.scan(
-                    FilterExpression=~Attr('analysis_data').exists(),
-                    ProjectionExpression='post_id, #txt, #ts, indexed_at',
-                    ExpressionAttributeNames={
-                        '#txt': 'text',
-                        '#ts': 'timestamp'
-                    },
-                    ExclusiveStartKey=last_evaluated_key,
-                    Limit=10
-                )
-            else:
-                response = table.scan(
-                    FilterExpression=~Attr('analysis_data').exists(),
-                    ProjectionExpression='post_id, #txt, #ts, indexed_at',
-                    ExpressionAttributeNames={
-                        '#txt': 'text',
-                        '#ts': 'timestamp'
-                    },
-                    Limit=10
-                )
-            
-            current_items = response.get('Items', [])
-            items.extend(current_items)
-            
-            last_evaluated_key = response.get('LastEvaluatedKey')
-            logger.info(f"Scan returned {len(current_items)} items")
-            logger.info(f"Last evaluated key: {last_evaluated_key}")
-            
-            if not last_evaluated_key or len(items) >= 10:  # Stop if we have enough items or no more pages
-                break
-        
-        # Sort items by timestamp
-        sorted_items = sorted(items, key=lambda x: x.get('timestamp', ''))
+def process_batch(posts, batch_size=100):
+    """Process a batch of posts"""
+    for post in posts:
+        try:
+            text = post.get('_source', {}).get('text', '')
+            if not text:
+                continue
 
-        if not sorted_items:
-            logger.info("No unanalyzed items found. Checking again immediately...")
+            analysis_results = process_text(text)
+            if not analysis_results:
+                continue
+
+            # Update the document with sentiment analysis
+            update_body = {
+                'doc': {
+                    'sentiment_analysis': analysis_results,
+                    'analyzed_at': datetime.utcnow().isoformat()
+                }
+            }
+
+            opensearch_client.update(
+                index=INDEX_NAME,
+                id=post['_id'],
+                body=update_body,
+                retry_on_conflict=3
+            )
+
+            logger.info(f"Updated post {post['_id']} with sentiment: {analysis_results['sentiment']}")
+
+        except Exception as e:
+            logger.error(f"Error processing post {post.get('_id')}: {str(e)}")
             continue
 
-        for item in sorted_items:
-            text = item.get('text', '')
-            if not text:
-                logger.warning(f"No text found for post {item.get('post_id')}")
-                continue
-            
-            try:
-                # Process the text
-                analysis_results = process_text(text)
-                if not analysis_results:
-                    continue
-
-                # Update the item with analysis results
-                table.update_item(
-                    Key={
-                        'post_id': item['post_id'],
-                        'timestamp': item['timestamp']
-                    },
-                    UpdateExpression="""
-                        SET sentiment = :s, 
-                            named_entities = :n, 
-                            analysis_data = :a,
-                            analyzed_at = :t
-                    """,
-                    ExpressionAttributeValues={
-                        ':s': analysis_results['sentiment'],
-                        ':n': analysis_results['named_entities'],
-                        ':a': True,
-                        ':t': datetime.utcnow().isoformat()
+def main():
+    batch_size = 100
+    scroll_size = 1000
+    
+    while True:
+        try:
+            # Query for unanalyzed posts
+            query = {
+                "query": {
+                    "bool": {
+                        "must_not": [
+                            {"exists": {"field": "sentiment_analysis"}}
+                        ]
                     }
+                },
+                "sort": [{"timestamp": "asc"}],
+                "size": scroll_size
+            }
+
+            # Initialize scroll
+            response = opensearch_client.search(
+                index=INDEX_NAME,
+                body=query,
+                scroll='5m'
+            )
+
+            scroll_id = response['_scroll_id']
+            hits = response['hits']['hits']
+
+            while hits:
+                logger.info(f"Processing batch of {len(hits)} posts")
+                
+                # Process posts in parallel using ThreadPoolExecutor
+                with ThreadPoolExecutor(max_workers=4) as executor:
+                    for i in range(0, len(hits), batch_size):
+                        batch = hits[i:i + batch_size]
+                        executor.submit(process_batch, batch, batch_size)
+
+                # Get next batch using scroll
+                response = opensearch_client.scroll(
+                    scroll_id=scroll_id,
+                    scroll='5m'
                 )
                 
-                logger.info(f"Updated post {item['post_id']} with sentiment: {analysis_results['sentiment']} and named_entities: {analysis_results['named_entities']}")
+                hits = response['hits']['hits']
                 
-            except Exception as e:
-                logger.error(f"Error processing post {item.get('post_id')}: {str(e)}")
-                continue
-        
-    except Exception as e:
-        logger.error(f"Error in main loop: {str(e)}")
-        continue
+            logger.info("No more unanalyzed posts found. Waiting before next check...")
+            time.sleep(60)  # Wait a minute before checking again
+
+        except Exception as e:
+            logger.error(f"Error in main loop: {str(e)}")
+            time.sleep(60)  # Wait before retrying
+            continue
+
+if __name__ == "__main__":
+    main()
