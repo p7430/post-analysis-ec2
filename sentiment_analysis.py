@@ -64,11 +64,11 @@ def detect_language(text):
         if not text or not isinstance(text, str):
             return 'unknown'
             
-        # Get prediction from fasttext
-        prediction = fasttext_model.predict(text.replace('\n', ' '))
+        # Get prediction from fasttext - using predict_single for single label prediction
+        prediction = fasttext_model.predict(text.replace('\n', ' '))[0][0]
         
         # Extract language code (removing '__label__' prefix)
-        lang = prediction[0][0].replace('__label__', '')
+        lang = prediction.replace('__label__', '')
         
         return lang
     except Exception as e:
