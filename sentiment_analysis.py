@@ -62,25 +62,18 @@ def process_text(text, langs=None):
         if not text or not text.strip():
             return None
 
-        # Verify language regardless of provided langs
-        try:
-            detected_lang = detect(text)
-            if not langs:
-                langs = [detected_lang]
-            elif detected_lang != 'en' and 'en' in langs:
-                logger.warning(f"Language mismatch - Provided langs: {langs}, Detected: {detected_lang}")
-                langs = [detected_lang]  # Trust the detection over the provided lang
-        except Exception as e:
-            logger.warning(f"Language detection failed: {str(e)}")
-            if not langs:
-                langs = []
+        # Detect language
+        detected_lang = detect(text)
+        if not langs:
+            langs = [detected_lang]
+        elif detected_lang != 'en' and 'en' in langs:
+            logger.warning(f"Language mismatch - Provided langs: {langs}, Detected: {detected_lang}")
+            langs = [detected_lang]  # Trust the detection over the provided lang
 
-        # Skip if not English - MOVED BEFORE sentiment analysis
+        # Skip if not English
         if 'en' not in langs or detected_lang != 'en':
             logger.info(f"Skipping non-English text (langs: {langs})")
-            return {
-                'sentiment': {'label': 'NEU', 'score': 0.5}
-            }
+            return None
 
         # Only analyze English text
         sentiment_result = sentiment_pipeline(text)[0]
