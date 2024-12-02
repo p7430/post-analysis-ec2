@@ -50,8 +50,8 @@ opensearch_client = OpenSearch(
     timeout=30
 )
 
-# Initialize sentiment analysis model (BERTweet)
-model_name = "vinai/bertweet-base"
+# Initialize sentiment analysis model
+model_name = "finiteautomata/bertweet-base-sentiment-analysis"  # Pre-trained for sentiment
 tokenizer = AutoTokenizer.from_pretrained(model_name)
 model = AutoModelForSequenceClassification.from_pretrained(model_name)
 sentiment_pipeline = pipeline("sentiment-analysis", model=model, tokenizer=tokenizer)
@@ -83,9 +83,18 @@ def process_text(text, langs=None):
 
         sentiment_result = sentiment_pipeline(text)[0]
         
+        # Map the labels properly
+        label_mapping = {
+            'POS': 'POS',
+            'NEG': 'NEG',
+            'NEU': 'NEU',
+            'LABEL_0': 'NEG',
+            'LABEL_1': 'POS'
+        }
+        
         return {
             'sentiment': {
-                'label': sentiment_result['label'],
+                'label': label_mapping.get(sentiment_result['label'], 'NEU'),
                 'score': float(sentiment_result['score'])
             }
         }
