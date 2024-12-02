@@ -151,14 +151,36 @@ def process_batch(posts, batch_size=100):
 
             # Handle non-English posts
             try:
-                # If we already know it's English from the langs field, skip detection
-                if 'en' in langs:
-                    detected_lang = 'en'
-                    confidence = 1.0
-                else:
+                # If langs is empty, rely only on detection
+                # If langs contains 'en', treat as English
+                # Otherwise, check both langs and detection
+                if not langs:  # Empty langs array
                     detected_lang, confidence = detect_language(text)
-
-                if detected_lang != 'en' or ('en' not in langs and langs):
+                    if detected_lang == 'en':
+                        # Process as English
+                        analysis_results = process_text(text)
+                    else:
+                        logger.info(f"Marking non-English text (detected: {detected_lang})")
+                        update_body = {
+                            'doc': {
+                                'sentiment_analysis': {
+                                    'sentiment': {'label': f'NON_ENGLISH_{detected_lang.upper()}', 'score': 0.0}
+                                },
+                                'analyzed_at': datetime.utcnow().isoformat(),
+                                'detected_language': detected_lang
+                            }
+                        }
+                        opensearch_client.update(
+                            index=INDEX_NAME,
+                            id=post['_id'],
+                            body=update_body,
+                            retry_on_conflict=3
+                        )
+                        continue
+                elif 'en' in langs:  # Explicitly marked as English
+                    analysis_results = process_text(text)
+                else:  # Has langs but not English
+                    detected_lang, confidence = detect_language(text)
                     logger.info(f"Marking non-English text (detected: {detected_lang}, provided: {langs})")
                     update_body = {
                         'doc': {
@@ -177,27 +199,10 @@ def process_batch(posts, batch_size=100):
                     )
                     continue
             except Exception as e:
-                logger.warning(f"Language detection failed: {str(e)}")
+                logger.warning(f"Language detection failed for text: '{text[:100]}...': {str(e)}", exc_info=True)
                 update_body = {
                     'doc': {
                         'sentiment_analysis': {'sentiment': {'label': 'LANG_DETECT_ERROR', 'score': 0.0}},
-                        'analyzed_at': datetime.utcnow().isoformat()
-                    }
-                }
-                opensearch_client.update(
-                    index=INDEX_NAME,
-                    id=post['_id'],
-                    body=update_body,
-                    retry_on_conflict=3
-                )
-                continue
-
-            analysis_results = process_text(text, langs)
-            if not analysis_results:
-                # Mark failed analysis
-                update_body = {
-                    'doc': {
-                        'sentiment_analysis': {'sentiment': {'label': 'ANALYSIS_ERROR', 'score': 0.0}},
                         'analyzed_at': datetime.utcnow().isoformat()
                     }
                 }
