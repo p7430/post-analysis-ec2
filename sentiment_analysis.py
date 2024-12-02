@@ -60,20 +60,18 @@ fasttext_model = fasttext.load_model('lid.176.bin')
 
 def detect_language(text):
     try:
-        # FastText expects clean text
         if not text or not isinstance(text, str):
-            return 'unknown'
+            return 'unknown', 0.0
+            
+        # Get prediction and confidence from fasttext
+        predictions = fasttext_model.predict(text.replace('\n', ' '), k=1)
+        lang = predictions[0][0].replace('__label__', '')
+        confidence = float(predictions[1][0])
         
-        # Get prediction from fasttext
-        prediction = fasttext_model.predict(text.replace('\n', ' '), k=1)  # k=1 for top prediction
-        
-        # Extract language code (removing '__label__' prefix)
-        lang = prediction[0][0].replace('__label__', '')
-        
-        return lang
+        return lang, confidence
     except Exception as e:
         logger.warning(f"Language detection failed: {str(e)}")
-        return 'unknown'
+        return 'unknown', 0.0
 
 def process_text(text, langs=None):
     """Process text and return sentiment results"""
@@ -81,24 +79,30 @@ def process_text(text, langs=None):
         if not text or not text.strip():
             return None
 
-        # Detect language
+        # Detect language with confidence
         detected_lang, confidence = detect_language(text)
-        if confidence < 0.7:  # Set a confidence threshold
+        
+        if confidence < 0.7:  # Confidence threshold
             detected_lang = 'en'  # Default to English if confidence is low
+            logger.info(f"Low confidence language detection ({confidence:.2f}), defaulting to English")
 
         if not langs:
             langs = [detected_lang]
         elif detected_lang != 'en' and 'en' in langs:
-            logger.warning(f"Language mismatch - Provided langs: {langs}, Detected: {detected_lang}")
+            logger.warning(f"Language mismatch - Provided langs: {langs}, Detected: {detected_lang} (conf: {confidence:.2f})")
             langs = [detected_lang]  # Trust the detection over the provided lang
 
         # Skip if not English
         if 'en' not in langs or detected_lang != 'en':
-            logger.info(f"Marking non-English text (detected: {detected_lang}, provided: {langs})")
+            logger.info(f"Marking non-English text (detected: {detected_lang}, conf: {confidence:.2f}, provided: {langs})")
             return {
                 'sentiment': {
                     'label': f'NON_ENGLISH_{detected_lang.upper()}',
                     'score': 0.0
+                },
+                'language': {
+                    'detected': detected_lang,
+                    'confidence': confidence
                 }
             }
 
