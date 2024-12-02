@@ -85,8 +85,8 @@ class FastTextWrapper:
             # Get raw prediction
             raw_labels, raw_probs = self.model.predict(cleaned_text)
             
-            # Convert probabilities to regular Python list to avoid NumPy array issues
-            probs = [np.asarray(p).item() for p in raw_probs]
+            # Convert probabilities to regular Python floats
+            probs = [float(p) for p in raw_probs]
             
             return raw_labels, probs
             
