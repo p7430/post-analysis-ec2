@@ -68,50 +68,40 @@ model = AutoModelForSequenceClassification.from_pretrained(model_name)
 sentiment_pipeline = pipeline("sentiment-analysis", model=model, tokenizer=tokenizer)
 
 # Initialize FastText model
+class FastTextWrapper:
+    def __init__(self, model_path):
+        self.model = fasttext.load_model(model_path)
+    
+    def predict(self, text):
+        try:
+            if not text or text.isspace():
+                return ['__label__unknown'], [0.0]
+                
+            # Clean the text
+            cleaned_text = text.replace('\n', ' ').strip()
+            if not cleaned_text:
+                return ['__label__unknown'], [0.0]
+                
+            # Get raw prediction
+            raw_labels, raw_probs = self.model.predict(cleaned_text)
+            
+            # Convert probabilities to regular Python list to avoid NumPy array issues
+            probs = [float(p) for p in raw_probs]
+            
+            return raw_labels, probs
+            
+        except Exception as e:
+            logger.error(f"FastText prediction error: {str(e)}")
+            return ['__label__unknown'], [0.0]
+
+# Initialize the wrapper instead of raw FastText
 try:
-    fasttext.FastText.eprint = lambda x: None  # Suppress FastText warning messages
     model_path = download_fasttext_model()
-    ft_model = fasttext.load_model(model_path)
+    ft_model = FastTextWrapper(model_path)
     logger.info("FastText language detection model loaded successfully")
 except Exception as e:
     logger.error(f"Failed to load FastText model: {str(e)}")
     raise
-
-# Add this after importing fasttext but before using it
-def patched_predict(self, text, k=1, threshold=0.0, on_unicode_error='strict'):
-    """Monkey-patched version of FastText predict that uses np.asarray"""
-    if isinstance(text, str):
-        text = text.encode('utf-8', errors=on_unicode_error)
-    labels, probs = self._predict(text, k, threshold)
-    # Use asarray instead of array with copy=False
-    return labels, np.asarray(probs)
-
-# Patch the FastText class
-fasttext.FastText.predict = patched_predict
-
-def detect_language(text):
-    try:
-        if not text or text.isspace():
-            return 'unknown', 0.0
-
-        cleaned_text = text.replace('\n', ' ').strip()
-        if not cleaned_text:
-            return 'unknown', 0.0
-
-        # Get prediction from FastText
-        try:
-            labels, probs = ft_model.predict(cleaned_text)
-            lang = labels[0].replace('__label__', '')
-            conf = float(probs[0])
-            logger.info(f"Language detection successful: {lang}, {conf}")
-            return lang, conf
-        except Exception as predict_error:
-            logger.error(f"FastText prediction failed: {str(predict_error)}")
-            return 'unknown', 0.0
-
-    except Exception as e:
-        logger.error(f"Error detecting language: {str(e)}", exc_info=True)
-        return 'unknown', 0.0
 
 def process_text(text, langs=None):
     """Process text and return sentiment results"""
