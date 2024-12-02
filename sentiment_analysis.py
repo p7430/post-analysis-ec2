@@ -107,23 +107,76 @@ def process_batch(posts, batch_size=100):
             langs = source.get('langs', [])
             
             if not text:
+                # Mark empty posts
+                update_body = {
+                    'doc': {
+                        'sentiment_analysis': {'sentiment': {'label': 'EMPTY', 'score': 0.0}},
+                        'analyzed_at': datetime.utcnow().isoformat()
+                    }
+                }
+                opensearch_client.update(
+                    index=INDEX_NAME,
+                    id=post['_id'],
+                    body=update_body,
+                    retry_on_conflict=3
+                )
                 continue
 
-            # Skip non-English posts early
+            # Handle non-English posts
             try:
                 detected_lang = detect(text)
                 if detected_lang != 'en' or ('en' not in langs and langs):
-                    logger.info(f"Skipping non-English text (detected: {detected_lang}, provided: {langs})")
+                    logger.info(f"Marking non-English text (detected: {detected_lang}, provided: {langs})")
+                    update_body = {
+                        'doc': {
+                            'sentiment_analysis': {
+                                'sentiment': {'label': f'NON_ENGLISH_{detected_lang.upper()}', 'score': 0.0}
+                            },
+                            'analyzed_at': datetime.utcnow().isoformat(),
+                            'detected_language': detected_lang
+                        }
+                    }
+                    opensearch_client.update(
+                        index=INDEX_NAME,
+                        id=post['_id'],
+                        body=update_body,
+                        retry_on_conflict=3
+                    )
                     continue
             except Exception as e:
                 logger.warning(f"Language detection failed: {str(e)}")
+                update_body = {
+                    'doc': {
+                        'sentiment_analysis': {'sentiment': {'label': 'LANG_DETECT_ERROR', 'score': 0.0}},
+                        'analyzed_at': datetime.utcnow().isoformat()
+                    }
+                }
+                opensearch_client.update(
+                    index=INDEX_NAME,
+                    id=post['_id'],
+                    body=update_body,
+                    retry_on_conflict=3
+                )
                 continue
 
             analysis_results = process_text(text, langs)
             if not analysis_results:
+                # Mark failed analysis
+                update_body = {
+                    'doc': {
+                        'sentiment_analysis': {'sentiment': {'label': 'ANALYSIS_ERROR', 'score': 0.0}},
+                        'analyzed_at': datetime.utcnow().isoformat()
+                    }
+                }
+                opensearch_client.update(
+                    index=INDEX_NAME,
+                    id=post['_id'],
+                    body=update_body,
+                    retry_on_conflict=3
+                )
                 continue
 
-            # Update the document with sentiment analysis
+            # Update successful analysis
             update_body = {
                 'doc': {
                     'sentiment_analysis': analysis_results,
